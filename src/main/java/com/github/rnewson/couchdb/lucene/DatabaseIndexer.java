@@ -7,6 +7,7 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.io.StringReader;
 import java.io.Writer;
 import java.net.SocketException;
 import java.util.Collections;
@@ -33,6 +34,7 @@ import org.apache.http.client.ResponseHandler;
 import org.apache.http.client.methods.HttpUriRequest;
 import org.apache.log4j.Logger;
 import org.apache.lucene.analysis.Analyzer;
+import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.Field.Index;
@@ -51,11 +53,17 @@ import org.apache.lucene.search.Query;
 import org.apache.lucene.search.Sort;
 import org.apache.lucene.search.TopDocs;
 import org.apache.lucene.search.TopFieldDocs;
+import org.apache.lucene.search.highlight.Highlighter;
+import org.apache.lucene.search.highlight.InvalidTokenOffsetsException;
+import org.apache.lucene.search.highlight.QueryScorer;
+import org.apache.lucene.search.highlight.SimpleFragmenter;
+import org.apache.lucene.search.highlight.SimpleHTMLFormatter;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FSDirectory;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
+import org.json.JSONTokener;
 import org.mozilla.javascript.ClassShutter;
 import org.mozilla.javascript.Context;
 
@@ -70,6 +78,11 @@ import com.github.rnewson.couchdb.lucene.util.StopWatch;
 import com.github.rnewson.couchdb.lucene.util.Utils;
 
 public final class DatabaseIndexer implements Runnable, ResponseHandler<Void> {
+
+	private static final String FRAGMENT_SEPARATOR = "...";
+
+	private static final int FRAGMENT_SIZE = 60;
+	private static final String HIGHLIGTH_FIELD_NAME = "highlight";
 
 	private class IndexState {
 
@@ -478,6 +491,13 @@ public final class DatabaseIndexer implements Runnable, ResponseHandler<Void> {
 				final Analyzer analyzer = state.analyzer(req.getParameter("analyzer"));
 				final Operator operator = "and".equalsIgnoreCase(req.getParameter("default_operator"))
 				? Operator.AND : Operator.OR;
+				
+				
+//				if (req.getParameter("highlighter") != null) {
+//					JSONObject object = (JSONObject) new JSONTokener(req.getParameter("highlighter")).nextValue();
+//					String query = object.getString("query");
+//				}
+				
 				final Query q = state.parse(queryString, operator, analyzer);
 
 				final JSONObject queryRow = new JSONObject();
@@ -539,9 +559,19 @@ public final class DatabaseIndexer implements Runnable, ResponseHandler<Void> {
 							}
 							final String name = fld.name();
 							final String value = fld.stringValue();
+							
+
 							if (value != null) {
 								if ("_id".equals(name)) {
 									row.put("id", value);
+								}
+								else if (name.startsWith(HIGHLIGTH_FIELD_NAME)) {
+									/***/
+									int maxNumFragmentsRequired = 6;
+									String highliter = generateHighligther(analyzer, q, value, maxNumFragmentsRequired);
+									row.put(name, highliter);
+						
+									/***/
 								} else {
 									if (!fields.has(name)) {
 										fields.put(name, value);
@@ -641,6 +671,30 @@ public final class DatabaseIndexer implements Runnable, ResponseHandler<Void> {
 		} finally {
 			writer.close();
 		}
+	}
+
+	private String generateHighligther(final Analyzer analyzer, final Query q, 
+			final String text, int maxNumFragmentsRequired) throws IOException {
+		Highlighter highlighter = new Highlighter(new SimpleHTMLFormatter("<strong class=\"highlight\">", "</strong"),new QueryScorer(q));
+		
+		highlighter.setTextFragmenter(new SimpleFragmenter(FRAGMENT_SIZE));
+		
+		TokenStream tokenStream = analyzer.tokenStream(HIGHLIGTH_FIELD_NAME, new StringReader(text));
+		
+		String fragmentSeparator = FRAGMENT_SEPARATOR;
+		
+		String result = "";
+		try {
+			result = highlighter.getBestFragments(
+						tokenStream,
+						text,
+						maxNumFragmentsRequired,
+						fragmentSeparator);
+		}
+		catch (InvalidTokenOffsetsException e) {
+			logger.warn("Error in HighLight.", e);
+		}
+		return result;
 	}
 
 	private String[] getQueryStrings(final HttpServletRequest req) {
