@@ -79,6 +79,11 @@ import com.github.rnewson.couchdb.lucene.util.Utils;
 
 public final class DatabaseIndexer implements Runnable, ResponseHandler<Void> {
 
+	private static final String FRAGMENT_SEPARATOR = "...";
+
+	private static final int FRAGMENT_SIZE = 60;
+	private static final String HIGHLIGTH_FIELD_NAME = "highlight";
+
 	private class IndexState {
 
 		private final DocumentConverter converter;
@@ -554,22 +559,16 @@ public final class DatabaseIndexer implements Runnable, ResponseHandler<Void> {
 							}
 							final String name = fld.name();
 							final String value = fld.stringValue();
-							String FIELD_NAME = "highlight";
-
-							logger.info("Field name " + name);
 							
+
 							if (value != null) {
 								if ("_id".equals(name)) {
 									row.put("id", value);
 								}
-								else if (FIELD_NAME.equals(name)) {
+								else if (name.startsWith(HIGHLIGTH_FIELD_NAME)) {
 									/***/
-									
-									int maxNumFragmentsRequired = 2;
-									String highliter = generateHighligther(analyzer, q, value, 
-											FIELD_NAME, maxNumFragmentsRequired);
-									
-									row.put("highlighter", highliter);
+									int maxNumFragmentsRequired = 6;
+									String highliter = generateHighligther(analyzer, q, value, maxNumFragmentsRequired);
 									row.put(name, highliter);
 						
 									/***/
@@ -675,16 +674,14 @@ public final class DatabaseIndexer implements Runnable, ResponseHandler<Void> {
 	}
 
 	private String generateHighligther(final Analyzer analyzer, final Query q, 
-			final String text, String fieldName, int maxNumFragmentsRequired) throws IOException {
-		Highlighter highlighter = new Highlighter(new SimpleHTMLFormatter(),new QueryScorer(q));
-//		Highlighter highlighter = new Highlighter(new GradientFormatter(),new QueryScorer(q));
+			final String text, int maxNumFragmentsRequired) throws IOException {
+		Highlighter highlighter = new Highlighter(new SimpleHTMLFormatter("<strong class=\"highlight\">", "</strong"),new QueryScorer(q));
 		
-		highlighter.setTextFragmenter(new SimpleFragmenter(20));
+		highlighter.setTextFragmenter(new SimpleFragmenter(FRAGMENT_SIZE));
 		
-		TokenStream tokenStream = analyzer.tokenStream(fieldName, new StringReader(text));
+		TokenStream tokenStream = analyzer.tokenStream(HIGHLIGTH_FIELD_NAME, new StringReader(text));
 		
-		
-		String fragmentSeparator = "...";
+		String fragmentSeparator = FRAGMENT_SEPARATOR;
 		
 		String result = "";
 		try {
@@ -695,7 +692,7 @@ public final class DatabaseIndexer implements Runnable, ResponseHandler<Void> {
 						fragmentSeparator);
 		}
 		catch (InvalidTokenOffsetsException e) {
-			logger.warn("Error HighLight.", e);
+			logger.warn("Error in HighLight.", e);
 		}
 		return result;
 	}
